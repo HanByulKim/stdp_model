@@ -25,13 +25,13 @@ ts=10 # timestep
 tt=len(input[:]) # step number
 
 size = 28
-N = 100
+N = 1000
 M = 1   # Batch
-train_size = 100
+train_size = 1000
 Dis = 10  # Display Var
 
 # Wmax Wmin
-Wma = 260*(10**-10)
+Wma = 260*(10**-3)
 Wmax = torch.FloatTensor(N,size*size).uniform_(Wma,Wma).cuda()
 Wmi = 56*(10**-10)
 Wmin = torch.FloatTensor(N,size*size).uniform_(Wmi,Wmi).cuda()
@@ -42,12 +42,12 @@ W = torch.FloatTensor(N,size*size).uniform_(Wmi,Wma).cuda()
 classify = torch.FloatTensor(N).zero_().cuda()
 
 # Threshold
-Vth = 56000
+Vth = 2700
 Vtheta = torch.FloatTensor(N).zero_().cuda()
-Vtheta_unit = 1000
+Vtheta_unit = 600
 Vdelta = math.exp(-1/12)
 
-c = 500*(10**-15)
+c = 6000*(10**-6)
 comp_z = torch.FloatTensor(1,size*size).zero_().cuda()
 
 # LTP var
@@ -92,8 +92,9 @@ i=0
 while(i < train_size):
 	Q = torch.FloatTensor(N).zero_().cuda()
 	fire = torch.FloatTensor(N).zero_().cuda()
+	print(i)
     
-	for j in range(0,100):
+	for j in range(0,30):
 		# Y = W*X, Y as current to potential
 		sampling = torch.bernoulli(input[:,i:i+M]).cuda()
 		I = torch.sum(W.mm(sampling), dim=1)
@@ -132,27 +133,29 @@ while(i < train_size):
 		# clamping
 		W.clamp_(Wmi,Wma)
     
-		print(str(i) + " : " + str(fire))
+		#print(str(i) + " : " + str(fire))
 		#file.write(str(i) + " : " + str(fire) + "\n")
-		print(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta))
-		print(str(i) + "-" + str(j) + "Vth : " + str(V))
-		#file.write(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta) + "\n")
+		#print(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta))
+		print(str(i) + "-" + str(j) + "V : " + str(V))
+		#file2.write(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta) + "\n")
+		#file3.write(str(i) + "-" + str(j) + "V : " + str(V) + "\n")
 		#print("Weight" + str(i) + "-" + str(j) + " : " + str(W))
 		#file3.write(str(i) + "-" + str(j) + " : " + str(W.cpu().numpy()) + "\n")
 
 		# Displaying
 		
-
-		for h in range(0,Dis): #N
-			for k in range (0,size):
-				temp[k][h*size:h*size+size] = W[h][k*size:k*size+size]
-				temp_in[k][h*size:h*size+size] = input[k*size:k*size+size, i + h]
+		if(i==train_size-1 and j ==29):
+			for h in range(0,Dis): #N
+				for k in range (0,size):
+					temp[k][h*size:h*size+size] = W[h][k*size:k*size+size]
+					temp_in[k][h*size:h*size+size] = input[k*size:k*size+size, i + h]
 					  
-		#ax2.pcolormesh(X,Y,temp_in,cmap=plt.cm.get_cmap('gray'))
-		ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
-		plt.title('weight ' + str(i) + '-' + str(j))
-		plt.savefig('log/' + str(i) + '-' + str(j) + '.png')
-		#plt.pause(0.00000000001)
+			#ax2.pcolormesh(X,Y,temp_in,cmap=plt.cm.get_cmap('gray'))
+			ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
+			plt.title('weight ' + str(i) + '-' + str(j))
+			#plt.savefig('log/' + str(i) + '-' + str(j) + '.png')
+			plt.savefig('vex.png')
+			#plt.pause(0.00000000001)
 		
 	i+=M
 

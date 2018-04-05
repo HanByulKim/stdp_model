@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import math
 #import HHneuron
 np.set_printoptions(threshold=np.nan)
-
+        
 # Log
 file = open("log/fire.txt","w")
 file2 = open("log/Volt.txt","w")
@@ -22,19 +22,19 @@ input = torch.from_numpy(mnist.train.images.transpose(1,0)).cuda()
 test = torch.from_numpy(mnist.test.images.transpose(1,0)).cuda()
 label = mnist.train.labels
 
-ts=10 # timestep
 tt=len(input[:]) # step number
 
 size = 28
-N = 300
+post_size = 30
+N = post_size*10
 M = 1   # Batch
 train_size = 1000
 Dis = 10  # Display Var
 
 # Wmax Wmin
-Wma = 260*(10**-4)
+Wma = 0.02
 Wmax = torch.FloatTensor(N,size*size).uniform_(Wma,Wma).cuda()
-Wmi = 56*(10**-8) #-56*(10**-3)
+Wmi = 0 #-56*(10**-3)
 Wmin = torch.FloatTensor(N,size*size).uniform_(Wmi,Wmi).cuda()
 
 # Init Weight
@@ -79,9 +79,18 @@ ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
 plt.title('weight init')
 plt.pause(0.00001)
 i=0
-inTarget = N-3
-deTarget = 3
-train_step = 30
+inTarget = 20
+deTarget = 0
+train_step = 2
+Tn = 6
+ts = 5*(10**-3) # timestep 5ms
+
+P = torch.FloatTensor(size*size).zero_().cuda()
+Q = torch.FloatTensor(N).zero_().cuda()
+preNeuron = torch.IntTensor(size*size, 2*Tn).zero_().cuda()
+postNeuron = torch.IntTensor(N, 2*Tn).zero_().cuda()
+
+
 #%%
 # Train
 while(i < train_size):
@@ -89,6 +98,9 @@ while(i < train_size):
     V = torch.FloatTensor(N).zero_().cuda()
     I = torch.FloatTensor(N).zero_().cuda()
     fire = torch.FloatTensor(N).zero_().cuda()
+    deList = torch.IntTensor(0).zero_().cuda()
+    inList = torch.IntTensor(0).zero_().cuda()
+    holdList = torch.IntTensor(0).zero_().cuda()
     print("---" + str(i))
     
     sampling = torch.bernoulli(input[:,i:i+M]).cuda()
@@ -97,73 +109,100 @@ while(i < train_size):
     id = np.argmax(mnist.train.labels[i], axis=0)
     
     for j in range(0,10):
-        numspike = torch.sum(out[j*30:(j+1)*30],dim=0)[0]
+        numspike = torch.sum(fire[j*post_size:(j+1)*post_size],dim=0).int()[0]
         if(j == id):
             #add all spiking neurons to holdlist
+            inList = torch.cat((inList, torch.IntTensor(post_size).zero_().cuda()), 0)
+            holdList = torch.cat((holdList, fire[j*post_size:(j+1)*post_size,0].int()), 0)
+            
             if(numspike < inTarget):
                 # add x non-spiking neurons to inlist
                 x = inTarget - numspike
+                cand = ((1-fire[j*post_size:(j+1)*post_size]) * torch.FloatTensor(post_size,1).uniform_(0,1).cuda())[:,0]
+                a, ade = cand.topk(x)
+                
+                deList = torch.cat((deList, cand.ge(a[x-1]).int()),0)
+            else:
+                deList = torch.cat((deList, torch.IntTensor(post_size).zero_().cuda()),0)
         elif(numspike > deTarget):
             #add y spiking neurons to delist
             y = numspike - deTarget
+            cand = (fire[j*post_size:(j+1)*post_size] * torch.FloatTensor(post_size,1).uniform_(0,1).cuda())[:,0]
+            a, ain = cand.topk(y)
             
-                
-    for j in range(0,2*train_step):
-        # Y = W*X, Y as current to potential
-        sampling = torch.bernoulli(input[:,i:i+M]).cuda()
-        I = torch.sum(W.mm(sampling), dim=1)
-        #print(Ie[0])
-        
-        Q = (1-fire) * (I*ts*(10**-3) + Q) + fire * (I*ts*(10**-3))
-        V = Q/c
-
-        #print(str(i) + " : " + str(Vth+Vtheta) + " / " + str(V))
-        #file2.write(str(i) + " : " + str(Vth+Vtheta) + " / " + str(V) + "\n")
-        # Vth exponentially decayed
-        Vtheta *= Vdelta
-        
-        fire = Vi.gt(Vth + Vtheta).float().cuda()
-        Vtheta = Vtheta.add(fire*Vtheta_unit)
-	
-        # init -> LTP, (1-init) -> LTD
-        update = fire.expand(size*size,N).transpose(1,0).float().cuda()
-        init = sampling.transpose(1,0).expand(N,size*size)
-        # input > 0 LTP
-        LTPmask = update * init
-        # input < 0 LTP
-        LTDmask = update * (1 - init)
-        # Weight Update
-        #dw =  LTPmask * (alpha_p*(-beta_p*W.sub(Wmin)/Wmax.sub(Wmin)).exp()) + LTDmask * (- (A+B*W+C*(W*W)+D*(W*W*W)))
-        dw =  LTPmask * (alpha_p * Q * (Wma-W)) + LTDmask * (alpha_d * (Wma-W) )
-        W.add_(dw)
-        
-        #W = update * ( init * (gt * (W + (alpha_p*(-beta_p*W.sub(Wmin)/Wmax.sub(Wmin)).exp())) + (1-gt) * Wmax) + (1 - init) * ( ge * (W - (A+B*W+C*(W*W)+D*(W*W*W))) + (1-ge) * Wmin ) ) + (1 - update) * W
-
-        # clamping
-        W.clamp_(Wmi,Wma)
+            inList = torch.cat((inList, cand.ge(a[y-1]).int()),0)
+            deList = torch.cat((deList, torch.IntTensor(post_size).zero_().cuda()),0)
+            holdList = torch.cat((holdList, torch.IntTensor(post_size).zero_().cuda()),0)
+        else:
+            inList = torch.cat((inList, torch.IntTensor(post_size).zero_().cuda()),0)
+            deList = torch.cat((deList, torch.IntTensor(post_size).zero_().cuda()),0)
+            holdList = torch.cat((holdList, torch.IntTensor(post_size).zero_().cuda()),0)
+    i+=1
+      #%%                
+    for j in range(0, train_step):
+        for k in range(0, Tn):
+            if(k==1):  # deList
+                postNeuron[:,k] = deList
+            if(k==2):  # input
+                preNeuron[:,k] = torch.bernoulli(input[:,i]).cuda()
+            if(k==3):  # inList
+                postNeuron[:,k] = inList
+            if(j!=0 and k==0):  # holdList
+                postNeuron[:,k] = holdList
+            # Y = W*X, Y as current to potential
+            sampling = torch.bernoulli(input[:,i:i+M]).cuda()
+            I = torch.sum(W.mm(sampling), dim=1)
+            
+            Q = (1-fire) * (I*ts*(10**-3) + Q) + fire * (I*ts*(10**-3))
+            V = Q/c
     
-        #print(str(i) + " : " + str(fire[0:10]))
-        #file.write(str(i) + " : " + str(fire) + "\n")
-        #print(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta))
-        #print(str(i) + "-" + str(j) + "Vi : " + str(Vi.cpu().numpy()))
-        #file2.write(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta) + "\n")
-        #file3.write(str(i) + "-" + str(j) + "V : " + str(Vi.cpu().numpy()) + "\n")
-        #print("Weight" + str(i) + "-" + str(j) + " : " + str(W))
-        #file3.write(str(i) + "-" + str(j) + " : " + str(W.cpu().numpy()) + "\n")
-
-        # Displaying	
-        if(i==train_size-1 and j ==29):
-            for h in range(0,Dis): #N
-                for k in range (0,size):
-                    temp[k][h*size:h*size+size] = W[h][k*size:k*size+size]
-                    temp_in[k][h*size:h*size+size] = input[k*size:k*size+size, i + h]
-					  
-            #ax2.pcolormesh(X,Y,temp_in,cmap=plt.cm.get_cmap('gray'))
-            ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
-            plt.title('weight ' + str(i) + '-' + str(j))
-            #plt.savefig('log/' + str(i) + '-' + str(j) + '.png')
-            plt.savefig('vex.png')
-            #plt.pause(0.00000000001)
+            #print(str(i) + " : " + str(Vth+Vtheta) + " / " + str(V))
+            #file2.write(str(i) + " : " + str(Vth+Vtheta) + " / " + str(V) + "\n")
+            # Vth exponentially decayed
+            Vtheta *= Vdelta
+            
+            fire = Vi.gt(Vth + Vtheta).float().cuda()
+            Vtheta = Vtheta.add(fire*Vtheta_unit)
+    	
+            # init -> LTP, (1-init) -> LTD
+            update = fire.expand(size*size,N).transpose(1,0).float().cuda()
+            init = sampling.transpose(1,0).expand(N,size*size)
+            # input > 0 LTP
+            LTPmask = update * init
+            # input < 0 LTP
+            LTDmask = update * (1 - init)
+            # Weight Update
+            #dw =  LTPmask * (alpha_p*(-beta_p*W.sub(Wmin)/Wmax.sub(Wmin)).exp()) + LTDmask * (- (A+B*W+C*(W*W)+D*(W*W*W)))
+            dw =  LTPmask * (alpha_p * Q * (Wma-W)) + LTDmask * (alpha_d * (Wma-W) )
+            W.add_(dw)
+            
+            #W = update * ( init * (gt * (W + (alpha_p*(-beta_p*W.sub(Wmin)/Wmax.sub(Wmin)).exp())) + (1-gt) * Wmax) + (1 - init) * ( ge * (W - (A+B*W+C*(W*W)+D*(W*W*W))) + (1-ge) * Wmin ) ) + (1 - update) * W
+    
+            # clamping
+            W.clamp_(Wmi,Wma)
+        
+            #print(str(i) + " : " + str(fire[0:10]))
+            #file.write(str(i) + " : " + str(fire) + "\n")
+            #print(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta))
+            #print(str(i) + "-" + str(j) + "Vi : " + str(Vi.cpu().numpy()))
+            #file2.write(str(i) + "-" + str(j) + "Vth : " + str(Vth + Vtheta) + "\n")
+            #file3.write(str(i) + "-" + str(j) + "V : " + str(Vi.cpu().numpy()) + "\n")
+            #print("Weight" + str(i) + "-" + str(j) + " : " + str(W))
+            #file3.write(str(i) + "-" + str(j) + " : " + str(W.cpu().numpy()) + "\n")
+    
+            # Displaying	
+            if(i==train_size-1 and j ==29):
+                for h in range(0,Dis): #N
+                    for k in range (0,size):
+                        temp[k][h*size:h*size+size] = W[h][k*size:k*size+size]
+                        temp_in[k][h*size:h*size+size] = input[k*size:k*size+size, i + h]
+    					  
+                #ax2.pcolormesh(X,Y,temp_in,cmap=plt.cm.get_cmap('gray'))
+                ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
+                plt.title('weight ' + str(i) + '-' + str(j))
+                #plt.savefig('log/' + str(i) + '-' + str(j) + '.png')
+                plt.savefig('vex.png')
+                #plt.pause(0.00000000001)
 
     P = P * (train_step/Tltp) + Altp
     Q = Q * (train_step/Tltd) + Altd

@@ -90,24 +90,40 @@ Q = torch.FloatTensor(N).zero_().cuda()
 preNeuron = torch.IntTensor(size*size, 2*Tn).zero_().cuda()
 postNeuron = torch.IntTensor(N, 2*Tn).zero_().cuda()
 
+ALTP = 1
+ALTD = -1
+tau_ltp = 4*ts
+tau_ltd = 4*ts
+aLTP = 6*(10**-5)
+aLTD = 6.3*(10**-5)
+
+def updateP(dt):
+    return P * math.exp(dt/tau_ltp) + ALTP
+
+def updateQ(dt):
+    return Q * math.exp(dt/tau_ltd) + ALTD
 
 #%%
 # Train
 while(i < train_size):
-    Q = torch.FloatTensor(N).zero_().cuda()
-    V = torch.FloatTensor(N).zero_().cuda()
-    I = torch.FloatTensor(N).zero_().cuda()
+    # Artificial Spiking List
     fire = torch.FloatTensor(N).zero_().cuda()
     deList = torch.IntTensor(0).zero_().cuda()
     inList = torch.IntTensor(0).zero_().cuda()
     holdList = torch.IntTensor(0).zero_().cuda()
+    
+    # Recent Spike Timing
     print("---" + str(i))
     
+    # Natural Output Spiking
     sampling = torch.bernoulli(input[:,i:i+M]).cuda()
     out = W.mm(sampling)
     fire = out.gt(Vth).float().cuda()
+    
+    # Superising Labelsssssssss
     id = np.argmax(mnist.train.labels[i], axis=0)
     
+    # Making Artificial List    
     for j in range(0,10):
         numspike = torch.sum(fire[j*post_size:(j+1)*post_size],dim=0).int()[0]
         if(j == id):
@@ -139,16 +155,48 @@ while(i < train_size):
             holdList = torch.cat((holdList, torch.IntTensor(post_size).zero_().cuda()),0)
     i+=1
       #%%                
+
+    # Training on Trainstep
     for j in range(0, train_step):
+        # new training phase : clear all
+        tpreRecent = torch.IntTensor(size*size).uniform_(-math.inf,-math.inf).cuda()
+        tpostRecent = torch.IntTensor(N).uniform_(-math.inf,-math.inf).cuda()
+        
         for k in range(0, Tn):
             if(k==1):  # deList
                 postNeuron[:,k] = deList
+                dpost = (tpostRecent - deList * k) * ts
+                tpostRecent = (1-deList) * tpostRecent + deList * (j*train_step + k)
+                Q = updateQ(dpost)
+                
             if(k==2):  # input
-                preNeuron[:,k] = torch.bernoulli(input[:,i]).cuda()
+                preNeuron[:,k] = sampling[:,0]
+                dpre = (tpreRecent - sampling[:,0] * k) * ts
+                tpreRecent = (1-sampling[:,0]) * tpreRecent + sampling[:,0] * (j*train_step + k)
+                P = updateP(dpre)
+                
+                #LTD
+                #LTD from hold
+                
             if(k==3):  # inList
                 postNeuron[:,k] = inList
+                dpost = (tpostRecent - inList * k) * ts
+                tpostRecent = (1-inList) * tpostRecent + inList * (j*train_step + k)
+                Q = updateQ(dpost)
+                
+                #LTP
+                
+            if(k==4):
+                #LTP from natural increase
+                
             if(j!=0 and k==0):  # holdList
                 postNeuron[:,k] = holdList
+                dpost = (j*Tn + k) - dpost
+                
+            # update equation            
+            dWq = aLTD * Q * 
+            dWp = aLTP * P *
+            
             # Y = W*X, Y as current to potential
             sampling = torch.bernoulli(input[:,i:i+M]).cuda()
             I = torch.sum(W.mm(sampling), dim=1)

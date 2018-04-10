@@ -5,8 +5,8 @@
 from tensorflow.examples.tutorials.mnist import input_data
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 import math
+import matplotlib.pyplot as plt
 #import HHneuron
 np.set_printoptions(threshold=np.nan)
         
@@ -34,34 +34,18 @@ Wmax = 0.02
 Wmin = 0 #-56*(10**-3)
 
 # Init Weight
-# W = np.random.uniform(low=Wmin, high=Wmax, size=(tt+2,size*size))
 W = torch.FloatTensor(N,size*size).uniform_(Wmin,Wmax).cuda()
 
 # Threshold
-Vth = 0.65
-Vtheta = torch.FloatTensor(N).zero_().cuda()
-Vtheta_unit = 0.1
-Vdelta = math.exp(-1/12)
+Vth = 0.81
 
-c = 60*(10**-1)
-
-# Trining var
-alpha_p = 0.01  #8.5*(10**-12)
-alpha_d = -0.01
-beta_p = 2.35 #1.35
-
-i=0
-inTarget = 20
-deTarget = 0
+# train step
 train_step = 2
 Tn = 6
 ts = 5*(10**-3) # timestep 5ms
 
-P = torch.FloatTensor(size*size).zero_().cuda()
-Q = torch.FloatTensor(N).zero_().cuda()
-preNeuron = torch.LongTensor(size*size, 2*Tn).zero_().cuda()
-postNeuron = torch.LongTensor(N, 2*Tn).zero_().cuda()
-
+# Training Var
+i=0
 ALTP = 1
 ALTD = -1
 tau_ltp = 4*ts
@@ -70,24 +54,41 @@ aLTP = 6*(10**-5)
 aLTD = 6.3*(10**-5)
 inf = -10**8
 
+# Targeted number of spiking
+inTarget = 20
+deTarget = 0
+
+# Neuron Coefficient
+P = torch.FloatTensor(size*size).zero_().cuda()
+Q = torch.FloatTensor(N).zero_().cuda()
+
+# Neuron spiking status
+preNeuron = torch.LongTensor(size*size, 2*Tn).zero_().cuda()
+postNeuron = torch.LongTensor(N, 2*Tn).zero_().cuda()
+
+# updateing LTP coefficient P
 def updateP(dt, spike):
     return spike * (P * (dt/tau_ltp).exp() + ALTP) + (1-spike) * P
 
+# updateing LTD coefficient Q
 def updateQ(dt, spike):
     return spike * (Q * (dt/tau_ltd).exp() + ALTD) + (1-spike) * Q
 
+# Artificial decrease
 def adec(coeff, dt, List): # tpost < tpre (deList, holdList)
     # decrease filter = decrease list * input spike == 1
     filt = List.expand(size*size,N).transpose(1,0).cuda() * sampling.expand(size*size,N).transpose(1,0).cuda()
     
     return filt * aLTD * Q.expand(size*size,N).transpose(1,0) * math.exp(dt/tau_ltd)
 
+# Artificial increase
 def ainc(coeff, dt, List): # tpre < tpost (inList)
     # increase filter = input spike == 1 * increase list
     filt = sampling.expand(size*size,N).transpose(1,0).cuda() * List.expand(size*size,N).transpose(1,0).cuda()
     
     return filt * aLTP * P.expand(N,size*size) * math.exp(dt/tau_ltp)
 
+# Natural Increase
 def ninc(coeff, dt, invList): # natural increase
     # natural inc. filer = input spike == 1 * no de, in ,hold
     filt = sampling.expand(size*size,N).transpose(1,0).cuda() * (1 - invList).expand(size*size,N).transpose(1,0).cuda()
@@ -112,7 +113,7 @@ while(i < train_size):
     file2.write(str(out))
     fire = out.gt(Vth).float().cuda()
     
-    # Superising Labelsssssssss
+    # Superising Labels
     id = np.argmax(mnist.train.labels[i], axis=0)
     
     # Making Artificial List    
@@ -120,7 +121,7 @@ while(i < train_size):
         numspike = torch.sum(fire[j*post_size:(j+1)*post_size],dim=0).int()[0]
         if(j == id):
             #add all spiking neurons to holdlist
-            inList = torch.cat((inList, torch.LongTensor(post_size).zero_().cuda()), 0)
+            deList = torch.cat((deList, torch.LongTensor(post_size).zero_().cuda()), 0)
             holdList = torch.cat((holdList, fire[j*post_size:(j+1)*post_size,0].long()), 0)
             
             if(numspike < inTarget):
@@ -129,17 +130,17 @@ while(i < train_size):
                 cand = ((1-fire[j*post_size:(j+1)*post_size]) * torch.FloatTensor(post_size,1).uniform_(0,1).cuda())[:,0]
                 a, ade = cand.topk(x)
                 
-                deList = torch.cat((deList, cand.ge(a[x-1]).long()),0)
+                inList = torch.cat((inList, cand.ge(a[x-1]).long()),0)
             else:
-                deList = torch.cat((deList, torch.LongTensor(post_size).zero_().cuda()),0)
+                inList = torch.cat((inList, torch.LongTensor(post_size).zero_().cuda()),0)
         elif(numspike > deTarget):
             #add y spiking neurons to delist
             y = numspike - deTarget
             cand = (fire[j*post_size:(j+1)*post_size] * torch.FloatTensor(post_size,1).uniform_(0,1).cuda())[:,0]
             a, ain = cand.topk(y)
             
-            inList = torch.cat((inList, cand.ge(a[y-1]).long()),0)
-            deList = torch.cat((deList, torch.LongTensor(post_size).zero_().cuda()),0)
+            deList = torch.cat((deList, cand.ge(a[y-1]).long()),0)
+            inList = torch.cat((inList, torch.LongTensor(post_size).zero_().cuda()),0)
             holdList = torch.cat((holdList, torch.LongTensor(post_size).zero_().cuda()),0)
         else:
             inList = torch.cat((inList, torch.LongTensor(post_size).zero_().cuda()),0)
@@ -154,14 +155,13 @@ while(i < train_size):
         tpostRecent = torch.LongTensor(N).zero_().cuda()
         tpostRecent += inf
         for k in range(0, Tn):
-            dw = 0
             # T1
             if(k==1):  # deList
                 postNeuron[:,k] = deList
                 
                 # Q update
                 dpost = (tpostRecent - deList * k).float() * ts
-                tpostRecent = (1-deList) * tpostRecent + deList * (j*train_step + k)
+                tpostRecent = (1-deList) * tpostRecent + deList * (j*Tn + k)
                 Q = updateQ(dpost, postNeuron[:,k].float())
                 
             # T2
@@ -170,14 +170,16 @@ while(i < train_size):
                 
                 # P update
                 dpre = (tpreRecent.float() - sampling[:,0] * k) * ts
-                tpreRecent = (1-sampling[:,0].long()) * tpreRecent + sampling[:,0].long() * (j*train_step + k)
+                tpreRecent = (1-sampling[:,0].long()) * tpreRecent + sampling[:,0].long() * (j*Tn + k)
                 P = updateP(dpre, preNeuron[:,k].float())
                 
                 # LTD from artificial decrease
-                dw = adec(0, Tn, deList.float())
+                dw = adec(0, -ts, deList.float())
+                W.add_(dw)
                 # LTD from hold
                 if(j!=0):
-                    dw = adec(0, 2*Tn, holdList.float())
+                    dw = adec(0, -2*ts, holdList.float())
+                    W.add_(dw)
                 
             # T3
             if(k==3):  # inList
@@ -185,19 +187,22 @@ while(i < train_size):
                 
                 # Q update
                 dpost = (tpostRecent - inList * k).float() * ts
-                tpostRecent = (1-inList) * tpostRecent + inList * (j*train_step + k)
+                tpostRecent = (1-inList) * tpostRecent + inList * (j*Tn + k)
                 Q = updateQ(dpost, postNeuron[:,k].float())
                 
                 # LTP from artificial increase
-                dw = ainc(0, Tn, inList.float())
+                dw = ainc(0, -ts, inList.float())
+                W.add_(dw)
                 
             # T4
             if(k==4):
                 # LTP from natural increase
                 if(j==0):
-                    dw = ninc(0, 2*Tn, (inList + deList).float())
+                    dw = ninc(0, -2*ts, (inList + deList).float())
+                    W.add_(dw)
                 else:
-                    dw = ninc(0, 2*Tn, (inList + deList * holdList).float())
+                    dw = ninc(0, -2*ts, (inList + deList * holdList).float())
+                    W.add_(dw)
                 
             # Tn + T0
             if(j!=0 and k==0):  # holdList
@@ -205,11 +210,10 @@ while(i < train_size):
                 
                 # Q update
                 dpost = (tpostRecent - holdList * k).float() * ts
-                tpostRecent = (1-holdList) * tpostRecent + holdList * (j*train_step + k)
+                tpostRecent = (1-holdList) * tpostRecent + holdList * (j*Tn + k)
                 Q = updateQ(dpost, postNeuron[:,k].float())
             
             # update W
-            W.add_(dw)
             W.clamp_(Wmin,Wmax)
 
             #print(str(i) + " : " + str(fire[0:10]))
@@ -229,7 +233,7 @@ for i in range(0,test_size):
     out = W.mm(sampling)
     fire = out.gt(Vth).float().cuda()
     
-    result = torch.IntTensor(post_size).cuda()
+    result = torch.IntTensor(10).cuda()
     
     for j in range(0,10):
         result[j] = torch.sum(fire[j*post_size:(j+1)*post_size],dim=0).int()[0]

@@ -37,7 +37,7 @@ Wmin = 0 #-56*(10**-3)
 W = torch.FloatTensor(N,size*size).uniform_(Wmin,Wmax).cuda()
 
 # Threshold
-Vth = 0.81
+Vth = 0.6 #0.6
 
 # train step
 train_step = 2
@@ -95,7 +95,8 @@ def ninc(coeff, dt, invList): # natural increase
     
     return filt * aLTP * P.expand(N,size*size) * math.exp(dt/tau_ltp)
 
-#%%
+
+acc = 0
 # Train
 while(i < train_size):
     # Artificial Spiking List
@@ -104,8 +105,9 @@ while(i < train_size):
     inList = torch.LongTensor(0).zero_().cuda() # Artificial increasing List
     holdList = torch.LongTensor(0).zero_().cuda() # Holding list
     
-    # Recent Spike Timing
-    print("---" + str(i))
+    # Step
+    if(i%100 == 0):
+        print("---" + str(i))
     
     # Natural Output Spiking
     sampling = torch.bernoulli(input[:,i:i+M]).cuda()
@@ -160,7 +162,7 @@ while(i < train_size):
                 postNeuron[:,k] = deList
                 
                 # Q update
-                dpost = (tpostRecent - deList * k).float() * ts
+                dpost = (tpostRecent - deList * (j*Tn + k)).float() * ts
                 tpostRecent = (1-deList) * tpostRecent + deList * (j*Tn + k)
                 Q = updateQ(dpost, postNeuron[:,k].float())
                 
@@ -169,7 +171,7 @@ while(i < train_size):
                 preNeuron[:,k] = sampling[:,0]
                 
                 # P update
-                dpre = (tpreRecent.float() - sampling[:,0] * k) * ts
+                dpre = (tpreRecent.float() - sampling[:,0] * (j*Tn + k)) * ts
                 tpreRecent = (1-sampling[:,0].long()) * tpreRecent + sampling[:,0].long() * (j*Tn + k)
                 P = updateP(dpre, preNeuron[:,k].float())
                 
@@ -186,7 +188,7 @@ while(i < train_size):
                 postNeuron[:,k] = inList
                 
                 # Q update
-                dpost = (tpostRecent - inList * k).float() * ts
+                dpost = (tpostRecent - inList * (j*Tn + k)).float() * ts
                 tpostRecent = (1-inList) * tpostRecent + inList * (j*Tn + k)
                 Q = updateQ(dpost, postNeuron[:,k].float())
                 
@@ -201,7 +203,7 @@ while(i < train_size):
                     dw = ninc(0, -2*ts, (inList + deList).float())
                     W.add_(dw)
                 else:
-                    dw = ninc(0, -2*ts, (inList + deList * holdList).float())
+                    dw = ninc(0, -2*ts, (inList + deList + holdList).float())
                     W.add_(dw)
                 
             # Tn + T0
@@ -209,7 +211,7 @@ while(i < train_size):
                 postNeuron[:,k] = holdList
                 
                 # Q update
-                dpost = (tpostRecent - holdList * k).float() * ts
+                dpost = (tpostRecent - holdList * (j*Tn + k)).float() * ts
                 tpostRecent = (1-holdList) * tpostRecent + holdList * (j*Tn + k)
                 Q = updateQ(dpost, postNeuron[:,k].float())
             
@@ -225,15 +227,14 @@ while(i < train_size):
             #print("Weight" + str(i) + "-" + str(j) + " : " + str(W))
             #file3.write(str(i) + "-" + str(j) + " : " + str(W.cpu().numpy()) + "\n")
     i+=M
-
 #%%
 # Test
+fire = torch.FloatTensor(N).zero_().cuda()
+result = torch.IntTensor(10).zero_().cuda()
+acc=0
 for i in range(0,test_size):
-    sampling = torch.bernoulli(test[:,i:i+M]).cuda()
-    out = W.mm(sampling)
-    fire = out.gt(Vth).float().cuda()
-    
-    result = torch.IntTensor(10).cuda()
+    out = W.mm(test[:,i:i+M])
+    fire = out.gt(out.mean(dim=0) + 1.6*out.std(dim=0)).float().cuda()
     
     for j in range(0,10):
         result[j] = torch.sum(fire[j*post_size:(j+1)*post_size],dim=0).int()[0]
@@ -241,12 +242,42 @@ for i in range(0,test_size):
     # Superising Labels
     if(torch.max(result, dim=0)[1][0] == np.argmax(mnist.test.labels[i], axis=0)):
         acc += 1
-        print("match")
+        print("match " + str(torch.max(result, dim=0)[1][0]) + " == " + str(np.argmax(mnist.test.labels[i], axis=0)))
     else:
-        print("wrong")
+        print("wrong " + str(torch.max(result, dim=0)[1][0]) + " == " + str(np.argmax(mnist.test.labels[i], axis=0)))
 
 print("accuracy : " + str(acc))
 
 file.close()
 file2.close()
 file3.close()
+#%%
+
+# Display Var
+Dis=10
+temp = torch.FloatTensor(size,size*Dis).zero_().cuda()
+temp_in = torch.FloatTensor(size,size*Dis).zero_().cuda()
+X = np.linspace(-25*Dis,25*Dis,size*Dis)
+Y = np.linspace(-25,25,size)
+
+# graph animation
+plt.ion()
+fig = plt.figure()
+#fig2 = plt.figure()
+ax = fig.add_subplot(111)
+#ax2 = fig2.add_subplot(111)
+ax.axis([-25*Dis,25*Dis,-25,25])
+#ax2.axis([-25*N,25*N,-25,25])
+plt.draw()
+for h in range(0,Dis): #N
+    for k in range (0,size):
+        temp[k][h*size:h*size+size] = W[h][k*size:k*size+size]
+        temp_in[k][h*size:h*size+size] = input[k*size:k*size+size, i + h]
+					  
+#ax2.pcolormesh(X,Y,temp_in,cmap=plt.cm.get_cmap('gray'))
+ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
+plt.title('weight ')
+#plt.savefig('log/' + str(i) + '-' + str(j) + '.png')
+plt.savefig('vex.png')
+plt.show()
+plt.pause(0.00000000001)

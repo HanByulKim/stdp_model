@@ -6,7 +6,6 @@ from tensorflow.examples.tutorials.mnist import input_data
 import torch
 import numpy as np
 import math
-import matplotlib.pyplot as plt
 #import HHneuron
 np.set_printoptions(threshold=np.nan)
         
@@ -234,7 +233,7 @@ result = torch.IntTensor(10).zero_().cuda()
 acc=0
 for i in range(0,test_size):
     out = W.mm(test[:,i:i+M])
-    fire = out.gt(out.mean(dim=0) + 1.6*out.std(dim=0)).float().cuda()
+    fire = out.gt(out.mean(dim=0) + 1.3*out.std(dim=0)).float().cuda()
     
     for j in range(0,10):
         result[j] = torch.sum(fire[j*post_size:(j+1)*post_size],dim=0).int()[0]
@@ -251,33 +250,3 @@ print("accuracy : " + str(acc))
 file.close()
 file2.close()
 file3.close()
-#%%
-
-# Display Var
-Dis=10
-temp = torch.FloatTensor(size,size*Dis).zero_().cuda()
-temp_in = torch.FloatTensor(size,size*Dis).zero_().cuda()
-X = np.linspace(-25*Dis,25*Dis,size*Dis)
-Y = np.linspace(-25,25,size)
-
-# graph animation
-plt.ion()
-fig = plt.figure()
-#fig2 = plt.figure()
-ax = fig.add_subplot(111)
-#ax2 = fig2.add_subplot(111)
-ax.axis([-25*Dis,25*Dis,-25,25])
-#ax2.axis([-25*N,25*N,-25,25])
-plt.draw()
-for h in range(0,Dis): #N
-    for k in range (0,size):
-        temp[k][h*size:h*size+size] = W[h][k*size:k*size+size]
-        temp_in[k][h*size:h*size+size] = input[k*size:k*size+size, i + h]
-					  
-#ax2.pcolormesh(X,Y,temp_in,cmap=plt.cm.get_cmap('gray'))
-ax.pcolormesh(X,Y,temp,cmap=plt.cm.get_cmap('RdBu'))
-plt.title('weight ')
-#plt.savefig('log/' + str(i) + '-' + str(j) + '.png')
-plt.savefig('vex.png')
-plt.show()
-plt.pause(0.00000000001)

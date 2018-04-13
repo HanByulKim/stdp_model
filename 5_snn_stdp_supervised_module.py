@@ -6,7 +6,6 @@ from tensorflow.examples.tutorials.mnist import input_data
 import torch
 import numpy as np
 import math
-import matplotlib.pyplot as plt
 #import HHneuron
 np.set_printoptions(threshold=np.nan)
         
@@ -56,10 +55,10 @@ class NN:
         
         # Wmax Wmin
         self.Wmax = Wmax
-        self.Wmin = Wmin #-56*(10**-3)
+        self.Wmin = Wmin
         
         # Init Weight
-        self.W = torch.FloatTensor(self.N,self.size*self.size).uniform_(self.Wmin,self.Wmax).cuda()
+        self.W = torch.FloatTensor(self.N,self.size).uniform_(self.Wmin,self.Wmax).cuda()
         
         # Threshold
         self.Vth = Vth #0.6
@@ -77,7 +76,7 @@ class NN:
         self.deTarget = deTarget
         
         # Neuron Coefficient
-        self.P = torch.FloatTensor(self.size*self.size).zero_().cuda()
+        self.P = torch.FloatTensor(self.size).zero_().cuda()
         self.Q = torch.FloatTensor(self.N).zero_().cuda()
 
     # updateing LTP coefficient P
@@ -91,23 +90,23 @@ class NN:
     # Artificial decrease
     def adec(self, sample, coeff, dt, List): # tpost < tpre (deList, holdList)
         # decrease filter = decrease list * input spike == 1
-        filt = List.expand(self.size*self.size,self.N).transpose(1,0).cuda() * sample.expand(self.size*self.size,self.N).transpose(1,0).cuda()
+        filt = List.expand(self.size,self.N).transpose(1,0).cuda() * sample.expand(self.size,self.N).transpose(1,0).cuda()
         
-        return filt * self.aLTD * self.Q.expand(self.size*self.size,self.N).transpose(1,0) * math.exp(dt/self.tau_ltd)
+        return filt * self.aLTD * self.Q.expand(self.size,self.N).transpose(1,0) * math.exp(dt/self.tau_ltd)
     
     # Artificial increase
     def ainc(self, sample, coeff, dt, List): # tpre < tpost (inList)
         # increase filter = input spike == 1 * increase list
-        filt = sample.expand(self.size*self.size,self.N).transpose(1,0).cuda() * List.expand(self.size*self.size,self.N).transpose(1,0).cuda()
+        filt = sample.expand(self.size,self.N).transpose(1,0).cuda() * List.expand(self.size,self.N).transpose(1,0).cuda()
         
-        return filt * self.aLTP * self.P.expand(self.N,self.size*self.size) * math.exp(dt/self.tau_ltp)
+        return filt * self.aLTP * self.P.expand(self.N,self.size) * math.exp(dt/self.tau_ltp)
     
     # Natural Increase
     def ninc(self, sample, coeff, dt, invList): # natural increase
         # natural inc. filer = input spike == 1 * no de, in ,hold
-        filt = sample.expand(self.size*self.size,self.N).transpose(1,0).cuda() * (1 - invList).expand(self.size*self.size,self.N).transpose(1,0).cuda()
+        filt = sample.expand(self.size,self.N).transpose(1,0).cuda() * (1 - invList).expand(self.size,self.N).transpose(1,0).cuda()
         
-        return filt * self.aLTP * self.P.expand(self.N,self.size*self.size) * math.exp(dt/self.tau_ltp)
+        return filt * self.aLTP * self.P.expand(self.N,self.size) * math.exp(dt/self.tau_ltp)
     
     # multiplication with W
     def Wmul(self, sample):
@@ -121,9 +120,9 @@ class NN:
         self.W.clamp_(self.Wmin,self.Wmax)
         
 class List:
-    def __init__(self):
-        self.post_size = 30
-        self.N = self.post_size*10
+    def __init__(self, N):
+        self.N = N
+        self.post_size = int(N/10)
         self.deList = torch.LongTensor(0).zero_().cuda() # Artificial decreasing List
         self.inList = torch.LongTensor(0).zero_().cuda() # Artificial increasing List
         self.holdList = torch.LongTensor(0).zero_().cuda() # Holding list
@@ -148,12 +147,12 @@ class List:
         cand = (spike * torch.FloatTensor(self.post_size,1).uniform_(0,1).cuda())[:,0]        
         self.deList = torch.cat((self.deList, cand.ge(cand.topk(y)[0][y-1]).long()),0)
 
-layer1 = NN(size, 300, 1, Wmax, Wmin, Vth, ALTP, ALTD, tau_ltp, tau_ltd, aLTP, aLTD, inTarget, deTarget)
+layer1 = NN(size*size, N, 1, Wmax, Wmin, Vth, ALTP, ALTD, tau_ltp, tau_ltd, aLTP, aLTD, inTarget, deTarget)
 
 # Train
 i=0
 while(i < train_size):
-    list1 = List()
+    list1 = List(N)
     # Artificial Spiking List
     fire = torch.FloatTensor(N).zero_().cuda()
     
@@ -198,7 +197,7 @@ while(i < train_size):
     # Training on Trainstep
     for j in range(0, train_step):
         # new training phase : clear all
-        tpreRecent = torch.LongTensor(layer1.size*layer1.size).zero_().cuda()
+        tpreRecent = torch.LongTensor(layer1.size).zero_().cuda()
         tpreRecent += inf
         tpostRecent = torch.LongTensor(layer1.N).zero_().cuda()
         tpostRecent += inf
@@ -265,6 +264,7 @@ while(i < train_size):
             #print("Weight" + str(i) + "-" + str(j) + " : " + str(W))
             #file3.write(str(i) + "-" + str(j) + " : " + str(W.cpu().numpy()) + "\n")
     i+=layer1.M
+
 #%%
 # Test
 fire = torch.FloatTensor(layer1.N).zero_().cuda()
@@ -272,7 +272,7 @@ result = torch.IntTensor(10).zero_().cuda()
 acc=0
 for i in range(0, test_size):
     out = layer1.Wmul(test[:,i:i+layer1.M])
-    fire = out.gt(out.mean(dim=0) + 1.6*out.std(dim=0)).float().cuda()
+    fire = out.gt(out.mean(dim=0) + (1.3)*out.std(dim=0)).float().cuda() #1.6
     
     for j in range(0,10):
         result[j] = torch.sum(fire[j*layer1.post_size:(j+1)*layer1.post_size],dim=0).int()[0]
@@ -286,6 +286,28 @@ for i in range(0, test_size):
 
 print("accuracy : " + str(acc))
 
+# finding sigma 
+'''
+fire = torch.FloatTensor(layer1.N).zero_().cuda()
+result = torch.IntTensor(10).zero_().cuda()
+acc=np.zeros(10)
+for k in range(0,10):
+    for i in range(0, test_size):
+        out = layer1.Wmul(test[:,i:i+layer1.M])
+        fire = out.gt(out.mean(dim=0) + (1+ 0.1*k)*out.std(dim=0)).float().cuda() #1.6
+        
+        for j in range(0,10):
+            result[j] = torch.sum(fire[j*layer1.post_size:(j+1)*layer1.post_size],dim=0).int()[0]
+        
+        # Superising Labels
+        if(torch.max(result, dim=0)[1][0] == np.argmax(mnist.test.labels[i], axis=0)):
+            acc[k] += 1
+            print("match " + str(torch.max(result, dim=0)[1][0]) + " == " + str(np.argmax(mnist.test.labels[i], axis=0)))
+        else:
+            print("wrong " + str(torch.max(result, dim=0)[1][0]) + " == " + str(np.argmax(mnist.test.labels[i], axis=0)))
+
+print("accuracy : " + str(acc))
+'''
 file.close()
 file2.close()
 file3.close()
